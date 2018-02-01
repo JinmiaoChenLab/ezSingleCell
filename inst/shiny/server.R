@@ -16,7 +16,7 @@ shinyServer(function(input, output, session) {
     ##-------------------Side Panel-------------------
 
     normMethod <- NULL
-    
+
     observeEvent(input$loadButton, {
         tpmFiles <- input$tpmFiles
         if(input$norm){
@@ -33,10 +33,10 @@ shinyServer(function(input, output, session) {
                                        sep="\t", header=TRUE, row.names=1, stringsAsFactors = FALSE)
                 sObj <- CreateSeuratObject(exp.data,
                               project = input$projName,
-                              names.field = input$field, 
-                              names.delim = input$delim, 
-                              is.expr = input$expThres, 
-                              normalization.method = normMethod, 
+                              names.field = input$field,
+                              names.delim = input$delim,
+                              is.expr = input$expThres,
+                              normalization.method = normMethod,
                               min.genes = input$min.genes)
                 mito.genes <- grep("^MT-", rownames(sObj@data), ignore.case = TRUE, value = TRUE)
                 percent.mito <- colSums(sObj@raw.data[mito.genes, ])/colSums(sObj@raw.data)
@@ -46,7 +46,7 @@ shinyServer(function(input, output, session) {
         }
         dir.create("Seurat_results")
     })
-    
+
     observeEvent(input$reset, {
       session$reload()
       print("Reset done")
@@ -66,7 +66,7 @@ shinyServer(function(input, output, session) {
           opendir(resultDir)
         }
     })
-    
+
     output$logo <- renderImage({
       return(list(
         src = "inst/extdata/logo.png",
@@ -74,7 +74,7 @@ shinyServer(function(input, output, session) {
         alt = "Singapore Immunology Network"
       ))
     }, deleteFile = FALSE)
-    
+
     opendir <- function(dir = getwd()){
       if (.Platform['OS.type'] == "windows"){
         shell.exec(dir)
@@ -82,7 +82,7 @@ shinyServer(function(input, output, session) {
         system(paste(Sys.getenv("R_BROWSER"), dir))
       }
     }
-    
+
     observeEvent(input$OpenDir, {
       resultDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results")
       if(!dir.exists(resultDir)){
@@ -130,8 +130,8 @@ shinyServer(function(input, output, session) {
                 i = i + 1;
               }
               prePlot()
-              pdf(filename2, 
-                  width=as.numeric(input$pdf_w), 
+              pdf(filename2,
+                  width=as.numeric(input$pdf_w),
                   height=as.numeric(input$pdf_h))
               print(QC_ViolinInput())
               dev.off()
@@ -170,8 +170,8 @@ shinyServer(function(input, output, session) {
                   i = i + 1;
                 }
                 prePlot()
-                pdf(filename2, 
-                    width=as.numeric(input$pdf_w), 
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
                     height=as.numeric(input$pdf_h))
                 GenePlot(v$scData, "nUMI", "nGene", cex.use = 1)
                 GenePlot(v$scData, "nUMI", "percent.mito", cell.ids = WhichCells(v$scData), cex.use = 1, do.hover = TRUE)
@@ -208,7 +208,7 @@ shinyServer(function(input, output, session) {
             })
           }
         }
-        
+
         output$VarGenes <- renderPlot({
           varGenePlotInput()
         }, height = 800, width = 850)
@@ -229,8 +229,8 @@ shinyServer(function(input, output, session) {
                 i = i + 1;
               }
               prePlot()
-              pdf(filename2, 
-                  width=as.numeric(input$pdf_w), 
+              pdf(filename2,
+                  width=as.numeric(input$pdf_w),
                   height=as.numeric(input$pdf_h))
               varGenePlotInput()
               mtext(VarGeneText)
@@ -240,9 +240,9 @@ shinyServer(function(input, output, session) {
         })
       })
     })
-    
-    
-    
+
+
+
     ##---------------PCA tabset-------------------
     # PCA plot
     observeEvent(input$doPCA, {
@@ -253,7 +253,7 @@ shinyServer(function(input, output, session) {
         v$isPCAdone <- TRUE
       })
     })
-    
+
     output$clustUI <- renderUI({
       if(is.null(v$isPCAdone)){
         return(NULL)
@@ -270,16 +270,16 @@ shinyServer(function(input, output, session) {
         )
       }
     })
-    
+
     observeEvent(input$findCluster, {
       withProgress(message = "Finding clusters...", value = 0.3, {
-        v$scData <- FindClusters(v$scData, reduction.type = "pca", dims.use = 1:input$dim.used, 
+        v$scData <- FindClusters(v$scData, reduction.type = "pca", dims.use = 1:input$dim.used,
                                  resolution = input$clus.res, print.output = 0, save.SNN = TRUE)
         output$cluster.done <- renderText(paste0("Clustering done!"))
         v$isClusterdone <- TRUE
       })
     })
-    
+
     output$pca_plotspace <- renderUI({
       if(is.null(v$isPCAdone)){
         return(NULL)
@@ -287,7 +287,7 @@ shinyServer(function(input, output, session) {
         plotlyOutput("PCAPlot", width = "100%")
       }
     })
-    
+
     observeEvent(input$Pca == "P_panel1", {
       pcaPlotInput <- function(){
         if(is.null(v$scData) || !v$isPCAdone){
@@ -318,8 +318,8 @@ shinyServer(function(input, output, session) {
               i = i + 1;
             }
             prePlot()
-            pdf(filename2, 
-                width=as.numeric(input$pdf_w), 
+            pdf(filename2,
+                width=as.numeric(input$pdf_w),
                 height=as.numeric(input$pdf_h))
             PCAPlot(v$scData, dim.1 = input$x.pc, dim.2 = input$y.pc, pt.size = 2)
             dev.off()
@@ -357,7 +357,7 @@ shinyServer(function(input, output, session) {
         }
       })
     })
-    
+
     # Viz plot
     observeEvent(input$Pca == "P_panel2", {
       if(!is.null(v$scData)){
@@ -392,8 +392,8 @@ shinyServer(function(input, output, session) {
               i = i + 1;
             }
             prePlot()
-            pdf(filename2, 
-                width=as.numeric(input$pdf_w), 
+            pdf(filename2,
+                width=as.numeric(input$pdf_w),
                 height=as.numeric(input$pdf_h))
             VizInput()
             dev.off()
@@ -401,7 +401,7 @@ shinyServer(function(input, output, session) {
         }
       })
     })
-    
+
     # PC heatmap
     observeEvent(input$Pca == "P_panel3", {
       PCHmInput <- function(){
@@ -431,8 +431,8 @@ shinyServer(function(input, output, session) {
               i = i + 1;
             }
             prePlot()
-            pdf(filename2, 
-                width=as.numeric(input$pdf_w), 
+            pdf(filename2,
+                width=as.numeric(input$pdf_w),
                 height=as.numeric(input$pdf_h))
             PCHmInput()
             dev.off()
@@ -440,9 +440,9 @@ shinyServer(function(input, output, session) {
         }
       })
     })
-    
+
     ##---------------Significant PCs tabset-------------------
-    
+
     # Jackstraw
     observeEvent(input$doJack, { #put under control of run button again
       JackInput <- function(){
@@ -473,8 +473,8 @@ shinyServer(function(input, output, session) {
               i = i + 1;
             }
             prePlot()
-            pdf(filename2, 
-                width=as.numeric(input$pdf_w), 
+            pdf(filename2,
+                width=as.numeric(input$pdf_w),
                 height=as.numeric(input$pdf_h))
             JackStrawPlot(v$scData, PCs = 1:12)
             dev.off()
@@ -482,7 +482,7 @@ shinyServer(function(input, output, session) {
         }
       })
     })
-    
+
     # Elbow
     observeEvent(input$doElbow, {
       ElbowInput <- function(){
@@ -512,8 +512,8 @@ shinyServer(function(input, output, session) {
               i = i + 1;
             }
             prePlot()
-            pdf(filename2, 
-                width=as.numeric(input$pdf_w), 
+            pdf(filename2,
+                width=as.numeric(input$pdf_w),
                 height=as.numeric(input$pdf_h))
             print(ElbowInput())
             dev.off()
@@ -521,16 +521,32 @@ shinyServer(function(input, output, session) {
         }
       })
     })
-    
+
     ##---------------TSNE tabset-------------------
+    output$perplex.option <- renderUI({
+        if(is.null(v$isPCAdone)){
+            return(NULL)
+        }else{
+            ##perplexity test
+            n.cells <- isolate(nrow(v$scData@dr$pca@cell.embeddings))
+            max.perplex <- as.integer((n.cells - 1)/3)
+            numericInput("perplexity",
+                         label = "Perplexity",
+                         value = if(max.perplex <30) max.perplex else 30,
+                         min = 0,
+                         max = max.perplex)
+        }
+    })
+
     observeEvent(input$doTsne, {
       withProgress(message = "Running tSNE...", value = 0.3, {
-        v$scData <- RunTSNE(v$scData, dims.use = 1:input$dim.used, max_iter = input$max.iter, do.fast = TRUE)
+        v$scData <- RunTSNE(v$scData, dims.use = 1:input$dim.used, max_iter = input$max.iter,
+                            do.fast = TRUE, perplexity = input$perplexity)
         output$Tsne.done <- renderText(paste0("TSNE done!"))
         v$isTSNEdone <- TRUE
       })
     })
-    
+
     observeEvent(input$doTsnePlot, {
       TsneInput <- function(){
         if(is.null(v$scData)){
@@ -559,8 +575,8 @@ shinyServer(function(input, output, session) {
               i = i + 1;
             }
             prePlot()
-            pdf(filename2, 
-                width=as.numeric(input$pdf_w), 
+            pdf(filename2,
+                width=as.numeric(input$pdf_w),
                 height=as.numeric(input$pdf_h))
             TSNEPlot(v$scData, pt.size = 2)
             dev.off()
@@ -582,7 +598,7 @@ shinyServer(function(input, output, session) {
         }
       })
     })
-    
+
     ##---------------DEGs tabset-------------------
     output$clust1 <- renderUI({
       if(is.null(v$scData)){
@@ -608,7 +624,7 @@ shinyServer(function(input, output, session) {
                     width = "100%")
       }
     })
-    
+
     observeEvent(input$doDeg, {
       if(is.null(v$scData)){
         return(NULL)
@@ -640,7 +656,7 @@ shinyServer(function(input, output, session) {
           DegPlotInput()
         }, height = 800, width = 400)
         output$Deg.table <- renderTable(print(head(ips.markers, 15)), rownames = TRUE, digits = -1)
-        
+
         observeEvent(input$PDFj, {
           if(!is.null(v$scData)){
             withProgress(message="Downloading plot PDF files...", value=0, {
@@ -656,8 +672,8 @@ shinyServer(function(input, output, session) {
                 i = i + 1;
               }
               prePlot()
-              pdf(filename2, 
-                  width=as.numeric(input$pdf_w), 
+              pdf(filename2,
+                  width=as.numeric(input$pdf_w),
                   height=as.numeric(input$pdf_h))
               print(DegPlotInput())
               dev.off()
@@ -668,7 +684,7 @@ shinyServer(function(input, output, session) {
       }
     })
     ##---------------Summary tab
-    
+
     ##------Clean up when ending session----
     session$onSessionEnded(function(){
       prePlot()

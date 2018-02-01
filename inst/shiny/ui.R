@@ -103,24 +103,24 @@ shinyUI(fluidPage(
                  hr(),
                  fluidRow(
                    column(6,
-                          sliderInput(inputId="pdf_w", label = "PDF width(in):", 
+                          sliderInput(inputId="pdf_w", label = "PDF width(in):",
                                       min=3, max=20, value=8, width=100, ticks=F)
                    ),
-                   column(6, 
-                          sliderInput(inputId="pdf_h", label = "PDF height(in):", 
+                   column(6,
+                          sliderInput(inputId="pdf_h", label = "PDF height(in):",
                                       min=3, max=20, value=8, width=100, ticks=F)
                    )),
-                 
+
                  actionButton("OpenDir", "Open download folder", icon = icon("folder"))
                ),
 
                ##------Save Data---------
                hr(),
                actionButton("saveButton", "Save Data", icon = icon("hand-o-right")),
-               
+
                hr(),
                h4(tags$a(href="mailto:a0124008@u.nus.edu,
-                         Chen_Jinmiao@immunol.a-star.edu.sg?subject=[ezSingleCell-question]", 
+                         Chen_Jinmiao@immunol.a-star.edu.sg?subject=[ezSingleCell-question]",
                          "Contact Us")),
                imageOutput("logo", height = "60px")
         ),
@@ -191,7 +191,7 @@ shinyUI(fluidPage(
                                                     ),
                                                     column(5,
                                                            uiOutput("clustUI")
-                                                           
+
                                                     )),
                                                   uiOutput("pca_plotspace")
                                          ),
@@ -237,24 +237,27 @@ shinyUI(fluidPage(
                            tabPanel("TSNE", fluidPage(
                              hr(),
                              fluidRow(
-                               column(4,
+                               column(3,
                                       numericInput("dim.used",
                                                    label = "Dimensions used",
                                                    value = 10)
                                ),
-                               column(4,
+                               column(3,
                                       numericInput("max.iter",
                                                    label = "Max Iterations",
                                                    value = 2000,
                                                    min = 100)
                                ),
-                               column(4,
+                               column(3,
+                                      uiOutput("perplex.option")
+                               ),
+                               column(3,
                                       br(),
                                       actionButton("doTsne", "Run TSNE", icon = icon("hand-pointer-o")),
                                       textOutput("Tsne.done"),
                                       br(),
                                       actionButton("doTsnePlot", "Update TSNE plot", icon = icon("hand-pointer-o"))
-                                      
+
                                )),
                              plotlyOutput("Tsne.plot", width = "100%")
                            )),
