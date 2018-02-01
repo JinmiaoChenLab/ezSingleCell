@@ -2,7 +2,10 @@ require(shiny)
 require(Seurat)
 require(dplyr)
 require(Matrix)
-require(plotly)
+require(plotly)    ## interactive plots
+require(ezSingleCell)
+require(DT)    ## customisable datatable output
+require(webshot)    ## dependecy for exporting plotly to PDF
 
 shinyUI(fluidPage(
     titlePanel("ezSingleCell: Seurat analysis of scRNAseq data"),
@@ -18,7 +21,12 @@ shinyUI(fluidPage(
                              multiple = FALSE,
                              accept = c("text/csv",
                                         "text/comma-separated-values,text/plain",
-                                        ".fcs")),
+                                        ".Robj")),
+                   fileInput(inputId = 'cellAnnoFiles',
+                             label = "Cell annotation file",
+                             multiple = FALSE,
+                             accept = c("text/csv",
+                                        "text/comma-separated-values,text/plain")),
                    checkboxInput(inputId = 'norm',
                              label = "Normalise?",
                              value = TRUE),
@@ -31,7 +39,7 @@ shinyUI(fluidPage(
                      column(6,
                             numericInput(inputId = "field",
                                          label = "Field",
-                                         value = 2,
+                                         value = 1,
                                          min = 1)
                      )
                    ),
@@ -39,10 +47,20 @@ shinyUI(fluidPage(
                                 label = "Expression cut off",
                                 value = 1,
                                 min = 0.1),
-                   numericInput(inputId = "min.genes",
-                                label = "Minimum genes",
-                                value = 200,
-                                min = 1),
+                   fluidRow(
+                       column(6,
+                              numericInput(inputId = "min.genes",
+                                           label = "Min. genes",
+                                           value = 200,
+                                           min = 1)
+                              ),
+                       column(6,
+                              numericInput(inputId = "min.cells",
+                                           label = "Min. cells",
+                                           value = 3,
+                                           min = 1)
+                              )
+                   ),
                    textInput(inputId = "projName",
                              label = "Project Name",
                              value = "Seurat_analysis"),
@@ -73,10 +91,7 @@ shinyUI(fluidPage(
                                   actionButton("PDFd", "Download PCA Plot(PDF) and co-ordinates", icon = icon("download"))
                  ),
                  conditionalPanel(" input.Pca == 'P_panel2' && input.tabs == 'PCA' ",
-                                  actionButton("PDFe", "Download Viz Plot in PDF", icon = icon("download"))
-                 ),
-                 conditionalPanel(" input.Pca == 'P_panel3' && input.tabs == 'PCA' ",
-                                  actionButton("PDFf", "Download PCA Heatmap in PDF", icon = icon("download"))
+                                  actionButton("PDFe", "Download PC Gene plots and PC table", icon = icon("download"))
                  ),
                  conditionalPanel(" input.diag == 'D_panel1' && input.tabs == 'Diagnostic' ",
                                   actionButton("PDFg", "Download Jackstraw Plot in PDF", icon = icon("download"))
@@ -103,24 +118,24 @@ shinyUI(fluidPage(
                  hr(),
                  fluidRow(
                    column(6,
-                          sliderInput(inputId="pdf_w", label = "PDF width(in):", 
+                          sliderInput(inputId="pdf_w", label = "PDF width(in):",
                                       min=3, max=20, value=8, width=100, ticks=F)
                    ),
-                   column(6, 
-                          sliderInput(inputId="pdf_h", label = "PDF height(in):", 
+                   column(6,
+                          sliderInput(inputId="pdf_h", label = "PDF height(in):",
                                       min=3, max=20, value=8, width=100, ticks=F)
                    )),
-                 
+
                  actionButton("OpenDir", "Open download folder", icon = icon("folder"))
                ),
 
                ##------Save Data---------
                hr(),
                actionButton("saveButton", "Save Data", icon = icon("hand-o-right")),
-               
+
                hr(),
                h4(tags$a(href="mailto:a0124008@u.nus.edu,
-                         Chen_Jinmiao@immunol.a-star.edu.sg?subject=[ezSingleCell-question]", 
+                         Chen_Jinmiao@immunol.a-star.edu.sg?subject=[ezSingleCell-question]",
                          "Contact Us")),
                imageOutput("logo", height = "60px")
         ),
@@ -134,7 +149,17 @@ shinyUI(fluidPage(
                                tabsetPanel(id="QC",
                                            tabPanel(title="Violin Plots", value = "QC_panel1",
                                                     br(),
-                                                    plotOutput("ViolinPlot", width = "100%")
+                                                    fluidRow(
+                                                        column(6,
+                                                               plotlyOutput("nGenePlot", width = "100%"),
+                                                               plotlyOutput("mitoPlot", width = "100%"),
+                                                               plotlyOutput("nUMIPlot", width = "100%")
+                                                               ),
+                                                        column(6,
+                                                               verbatimTextOutput("name")
+                                                        )
+                                                    )
+
                                                     ),
                                            tabPanel(title="Cell and Gene Plots", value="QC_panel2",
                                                     br(),
@@ -175,42 +200,71 @@ shinyUI(fluidPage(
                            tabPanel("PCA", fluidPage(
                              hr(),
                              tabsetPanel(id="Pca",
-                                         tabPanel(title="Plot", value="P_panel1",
+                                         tabPanel(title="PCA Plot", value="P_panel1",
                                                   br(),
                                                   fluidRow(
-                                                    column(2,
+                                                    column(3,
                                                            actionButton("doPCA", "Run PCA", icon = icon("hand-pointer-o"))
                                                     ),
-                                                    column(5,
-                                                           numericInput("x.pc",
-                                                                        label = "X-axis PC to use",
-                                                                        value = 1),
-                                                           numericInput("y.pc",
-                                                                        label = "Y-axis PC to use",
-                                                                        value = 2)
+                                                    column(3,
+                                                           selectInput("x.pc",
+                                                                       label = "X-axis PC to use",
+                                                                       choices = 1:20,
+                                                                       selected = 1)
+                                                           #placeholder for z-axis input
                                                     ),
-                                                    column(5,
-                                                           uiOutput("clustUI")
-                                                           
-                                                    )),
-                                                  uiOutput("pca_plotspace")
-                                         ),
-                                         tabPanel(title="Viz", value="P_panel2",
-                                                  br(),
-                                                  plotOutput("vizPlot", width = "100%")
-                                         ),
-                                         tabPanel(title="PC Heatmap", value="P_panel3",
-                                                  br(),
+                                                    column(3,
+                                                           selectInput("y.pc",
+                                                                       label = "Y-axis PC to use",
+                                                                       choices = 1:20,
+                                                                       selected = 2)
+                                                    ),
+                                                    column(3,
+                                                           selectInput("z.pc",
+                                                                       label = "Z-axis PC to use",
+                                                                       choices = 1:20,
+                                                                       selected = 3)
+                                                    )
+                                                  ),
                                                   fluidRow(
-                                                    column(2,
-                                                           numericInput("PCused",
-                                                                        label = "PC to select for heatmap",
-                                                                        value = 10,
-                                                                        min = 1)
-                                                    ),
-                                                    column(10,
-                                                           plotOutput("PCHeatmap", width = "100%")
-                                                    ))
+                                                      column(3 #,
+                                                             ## placeholder for point size argument
+                                                             #numericInput("pc.plot.size",
+                                                             #             label = "Point Size:",
+                                                             #             value = 1,
+                                                             #             min = 0.1,
+                                                             #             step = 0.5)
+                                                      ),
+                                                      column(3,
+                                                             sliderInput("pca.plot.alpha",
+                                                                         label = "Point Transparency",
+                                                                         min = 0,
+                                                                         max = 1,
+                                                                         step = 0.1,
+                                                                         value = 0.8)
+                                                      ),
+                                                      column(6,
+                                                             uiOutput("clustUI")
+                                                      )
+                                                  ),
+                                                  plotlyOutput("PCA2DPlot", width = "100%"),
+                                                  plotlyOutput("PCA3DPlot", width = "100%")
+                                         ),
+                                         tabPanel(title="PC Gene Visualisation", value="P_panel2",
+                                                  br(),
+                                                  selectInput("select.pc",
+                                                              label = "PC to plot",
+                                                              choices = c(1:20)
+                                                              ),
+                                                  fluidRow(
+                                                      column(4,
+                                                             plotOutput("vizPlot", width = "100%", height = "600px")
+                                                             ),
+                                                      column(8,
+                                                             plotOutput("PCHeatmap", width = "100%", height = "600px")
+                                                      )
+                                                  ),
+                                                  DT::dataTableOutput("PCtable")
                                          )
                              )
                            )),
@@ -252,11 +306,37 @@ shinyUI(fluidPage(
                                       br(),
                                       actionButton("doTsne", "Run TSNE", icon = icon("hand-pointer-o")),
                                       textOutput("Tsne.done"),
-                                      br(),
-                                      actionButton("doTsnePlot", "Update TSNE plot", icon = icon("hand-pointer-o"))
-                                      
+                                      br()
                                )),
-                             plotlyOutput("Tsne.plot", width = "100%")
+                             fluidRow(
+                                 column(3 #,
+                                        ## placeholder for point size argument
+                                        #numericInput("tsne.plot.size",
+                                        #             label = "Point Size:",
+                                        #             value = 1,
+                                        #             min = 0.1,
+                                        #             step = 0.5)
+                                 ),
+                                 column(3,
+                                        sliderInput("tsne.plot.alpha",
+                                                    label = "Point Transparency",
+                                                    min = 0,
+                                                    max = 1,
+                                                    step = 0.1,
+                                                    value = 0.8)
+                                 )
+                             ),
+                             br(),
+                             fluidRow(
+                                 column(10,
+                                        plotlyOutput("Tsne_2d_plot", width = "100%"),
+                                        plotlyOutput("Tsne_3d_plot", width = "100%")
+                                 ),
+                                 column(2,
+                                        textOutput("selection.summary"),
+                                        actionButton("create.selection", label = "Create cluster from selection"),
+                                        actionButton("reset.selection", label = "Reset identities"))
+                             )
                            )),
                            ##------DEGs---------
                            tabPanel("DEGs", fluidPage(
@@ -273,10 +353,11 @@ shinyUI(fluidPage(
                                )),
                              fluidRow(
                                column(6,
-                                      plotOutput("Deg.plot", width = "50%")
+                                      uiOutput("deg.gene.select"),
+                                      plotlyOutput("Deg.plot", width = "100%")
                                ),
                                column(6,
-                                      tableOutput("Deg.table")
+                                      DT::dataTableOutput("Deg.table")
                                ))
                            ))
                            ##------END---------
