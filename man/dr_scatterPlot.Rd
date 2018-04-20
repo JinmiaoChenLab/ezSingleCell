@@ -5,7 +5,8 @@
 \title{Create interactive scatter plots of dimension reduced embeddings from Seurat object}
 \usage{
 dr_scatterPlot(sObj, x.axis = 1, y.axis = 2, z.axis = 3, dim = "2D",
-  datatype = "pca", group.by = NULL, alpha = 0.8, interactive = TRUE)
+  datatype = "pca", group.by = NULL, alpha = 0.8, point.size = 1,
+  interactive = TRUE)
 }
 \arguments{
 \item{sObj}{A Seurat object}
@@ -24,7 +25,9 @@ dr_scatterPlot(sObj, x.axis = 1, y.axis = 2, z.axis = 3, dim = "2D",
 
 \item{alpha}{Value between 0 and 1 specifying point opacity. Useful to set lower for large datasets.}
 
-\item{interactive}{If \code{TRUE}, generates plotly object, otherwise returns ggplot object}
+\item{point.size}{Numeric value to set point size. Lower settings can help prevent points being crowded out.}
+
+\item{interactive}{If \code{TRUE}, generates plotly object, otherwise returns ggplot object.}
 }
 \value{
 A plotly object, or ggplot object if interactive is \code{FALSE}

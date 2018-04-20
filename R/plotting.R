@@ -79,7 +79,8 @@ violin_plot <- function(sObj, type, interactive = TRUE, event.data = NULL) {
 #' @param datatype Which dimension reduction embeddings to use, "pca" (Default), or "tsne"
 #' @param group.by Specifies how points should be colored
 #' @param alpha Value between 0 and 1 specifying point opacity. Useful to set lower for large datasets.
-#' @param interactive If \code{TRUE}, generates plotly object, otherwise returns ggplot object
+#' @param point.size Numeric value to set point size. Lower settings can help prevent points being crowded out.
+#' @param interactive If \code{TRUE}, generates plotly object, otherwise returns ggplot object.
 #' @return A plotly object, or ggplot object if interactive is \code{FALSE}
 #' @note 3D plots cannot be generated with interactive set to \code{FALSE}
 #' @import ggplot2
@@ -91,7 +92,7 @@ violin_plot <- function(sObj, type, interactive = TRUE, event.data = NULL) {
 #'
 dr_scatterPlot <- function(sObj, x.axis = 1, y.axis = 2, z.axis = 3,
                            dim = "2D", datatype = "pca", group.by = NULL,
-                           alpha = 0.8, interactive = TRUE){
+                           alpha = 0.8, point.size = 1, interactive = TRUE){
     if(dim == "3D" && !interactive){
         warning("3D plot can only be interactive, setting interactive to TRUE!")
         interactive <- TRUE
@@ -113,19 +114,21 @@ dr_scatterPlot <- function(sObj, x.axis = 1, y.axis = 2, z.axis = 3,
             geom_point(aes(colour = Cluster,
                            text = key,
                            key = key),
-                       alpha = alpha) +
-            theme(legend.position = "none",
+                       alpha = alpha,
+                       size = point.size) +
+            theme(legend.position = "bottom",
                   axis.title.y = element_text(angle = 90))+
             labs(x = colnames(data)[x.axis],
                  y = colnames(data)[y.axis])
 
         pp <- ggplotly(p, tooltip = c("text", "colour", "label")) %>%
-            layout(scene = list(
+            layout(
                 dragmode = "select"
-            ))
+            )
         if(interactive){
             return(pp)
         }else{
+            #legend.position = "none",
             return(p)
         }
     }else if(dim == "3D"){

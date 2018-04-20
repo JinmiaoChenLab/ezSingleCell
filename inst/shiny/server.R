@@ -4,6 +4,7 @@ options(shiny.launch.browser = T)
 
 shinyServer(function(input, output, session) {
     v <- reactiveValues(scData = NULL,
+                        idents = NULL,
                         isPCAdone = NULL,
                         isTSNEdone = NULL,
                         isClusterdone = NULL,
@@ -25,9 +26,27 @@ shinyServer(function(input, output, session) {
 
     normMethod <- NULL
 
+    output$name.field <- renderUI({
+        if(is.null(input$cellAnnoFiles)){
+            numericInput(inputId = "field",
+                         label = "Field",
+                         value = 1,
+                         min = 1)
+        }else{
+            annoFile <- input$cellAnnoFiles
+            anno.data <- read.table(annoFile$datapath[1], header = T,
+                                    sep = "\t", stringsAsFactors = FALSE)[1:5,]
+            groupings <- colnames(anno.data)
+            selectInput("groupby",
+                        label = "Group by:",
+                        choices = groupings)
+        }
+    })
+
     observeEvent(input$loadButton, {
         tpmFiles <- input$tpmFiles
         annoFile <- input$cellAnnoFiles
+        names.field <- input$field
         if(input$norm){
           normMethod <- "LogNormalize"
         }
@@ -40,13 +59,20 @@ shinyServer(function(input, output, session) {
                 print(file.exists(paste(tpmFiles$datapath[1], "/", tpmFiles$name[1], sep="")))
                 exp.data <- read.table(tpmFiles$datapath,
                                        sep="\t", header=TRUE, row.names=1, stringsAsFactors = FALSE)
-                anno.data <- read.table(annoFile$datapath[1], header = T, sep = "\t",
-                                        row.names = 1, stringsAsFactors = FALSE)
-                anno.data$combined <- paste(anno.data, anno.data, anno.data, sep = "_")
+                additional.ident <- NULL
+                if(!is.null(annoFile)){
+                    anno.data <- read.table(annoFile$datapath[1], header = T,
+                                            sep = "\t", stringsAsFactors = FALSE)
+                    to.append <- apply(anno.data, 1, paste, collapse = "_")
+                    colnames(exp.data) <- to.append
+                    names.field <- match(input$groupby, colnames(anno.data))
+                    additional.ident <- data.frame(data.frame(anno.data[,-1], row.names = to.append))
+                    additional.ident[] <- lapply(additional.ident, factor)
+                }
                 incProgress(0.5, "Creating Seurat Object")
                 sObj <- CreateSeuratObject(exp.data,
                               project = input$projName,
-                              names.field = input$field,
+                              names.field = names.field,
                               names.delim = input$delim,
                               is.expr = input$expThres,
                               normalization.method = normMethod,
@@ -56,6 +82,9 @@ shinyServer(function(input, output, session) {
                 percent.mito <- colSums(sObj@raw.data[mito.genes, ])/colSums(sObj@raw.data)
                 incProgress(0.5, "Adding metadata")
                 sObj <- AddMetaData(sObj, percent.mito, "percent.mito")
+                if(!is.null(additional.ident)){
+                    sObj <- AddMetaData(sObj, additional.ident)
+                }
                 v$scData <- sObj
             })
         }
@@ -80,6 +109,31 @@ shinyServer(function(input, output, session) {
           ## open the results directory
           opendir(resultDir)
         }
+    })
+
+    output$ident.swap <- renderUI({
+        if(is.null(v$scData)){
+            return(NULL)
+        }else{
+            groupings <- names(v$scData@meta.data[,!names(v$scData@meta.data) %in% c("nGene", "nUMI", "percent.mito")])
+            tagList(
+                h4("Set current identity:"),
+                fluidRow(
+                    column(6,
+                           selectInput("active.ident", label = NULL,
+                                       choices = groupings)
+                           ),
+                    column(6,
+                           actionButton("swap.ident",label = NULL, icon = icon("arrow-right"))
+                           )
+                )
+
+            )
+        }
+    })
+
+    observeEvent(input$swap.ident, {
+        v$scData <- SetIdent(v$scData, ident.use = as.character(v$scData@meta.data[,input$active.ident]))
     })
 
     output$logo <- renderImage({
@@ -340,6 +394,7 @@ shinyServer(function(input, output, session) {
                 dr_scatterPlot(v$scData, x.axis = as.numeric(input$x.pc),
                                y.axis = as.numeric(input$y.pc),
                                alpha = input$pca.plot.alpha,
+                               point.size = as.numeric(input$pc.plot.size),
                                dim = "2D", datatype = "pca")
             })
         }
@@ -397,10 +452,10 @@ shinyServer(function(input, output, session) {
                 while(file.exists(filename2)){
                     filename2 <- paste0(pdfDir, .Platform$file.sep,
                                         "pca_",
-                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".txt");
+                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".csv");
                     i = i + 1;
                 }
-                write.table(v$scData@dr$pca@cell.embeddings, file = filename2)
+                write.csv(v$scData@dr$pca@cell.embeddings, file = filename2)
             })
             withProgress(message="Downloading cluster IDs...", value=0.9, {
                 print(getwd())
@@ -411,10 +466,10 @@ shinyServer(function(input, output, session) {
                 filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), ".txt")
                 i = 0
                 while(file.exists(filename2)){
-                    filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), "_", sprintf("%03d", i + 1), ".txt");
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), "_", sprintf("%03d", i + 1), ".csv");
                     i = i + 1;
                 }
-                write.table(v$scData@ident, file = filename2)
+                write.csv(v$scData@ident, file = filename2)
             })
         }
     })
@@ -481,88 +536,109 @@ shinyServer(function(input, output, session) {
 
     # Jackstraw
     observeEvent(input$doJack, {
-      JackInput <- function(){
         if(is.null(v$scData)){
-          return(NULL)
+            return(NULL)
         }else{
-          withProgress(message="Running Jackstraw...", value=0, {
-            v$scData <- JackStraw(v$scData, num.replicate = 100, do.print = TRUE)
-            incProgress(0.7, "Plotting Jackstraw...")
-            JackStrawPlot(v$scData, PCs = 1:12)
-          })
+            withProgress(message="Running Jackstraw...", value=0.5, {
+                v$scData <- JackStraw(v$scData, num.replicate = 100, do.print = TRUE)
+            })
         }
-      }
-      output$Jackstraw <- renderPlot({
-        JackInput()
-      }, height = 800, width = 850)
-      observeEvent(input$PDFg, {
+    })
+
+    output$Jackstraw <- renderPlot({
+        if(is.null(v$scData@dr$pca@jackstraw)){
+            return(NULL)
+        }else{
+            JackStrawPlot(v$scData, PCs = 1:20)
+        }
+    }, height = 800, width = 850)
+
+    observeEvent(input$PDFg, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            JackStrawPlot(v$scData, PCs = 1:12)
-            dev.off()
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(JackStrawPlot(v$scData, PCs = 1:20))
+                dev.off()
+            })
         }
-      })
     })
 
     # Elbow
-    observeEvent(input$doElbow, {
-      ElbowInput <- function(){
-        if(is.null(v$scData)){
-          return(NULL)
+    output$Elbow <- renderPlot({
+        if(is.null(v$scData@dr$pca@jackstraw)){
+            return(NULL)
         }else{
-          withProgress(message="Generating Elbow Plot...", value=0, {
-            PCElbowPlot(v$scData)
-          })
+            withProgress(message="Generating Elbow Plot...", value=0.5, {
+                PCElbowPlot(v$scData)
+            })
         }
-      }
-      output$Elbow <- renderPlot({
-        ElbowInput()
-      }, height = 800, width = 850)
-      observeEvent(input$PDFh, {
+    }, height = 800, width = 850)
+
+    observeEvent(input$PDFh, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            print(ElbowInput())
-            dev.off()
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(PCElbowPlot(v$scData))
+                dev.off()
+            })
         }
-      })
     })
 
     ##---------------TSNE tabset-------------------
+    output$perplex.option <- renderUI({
+        if(is.null(v$isPCAdone)){
+            return(NULL)
+        }else{
+            ##perplexity test
+            n.cells <- isolate(nrow(v$scData@dr$pca@cell.embeddings))
+            max.perplex <- as.integer((n.cells - 1)/3)
+            numericInput("perplexity",
+                         label = "Perplexity",
+                         value = if(max.perplex <30) max.perplex else 30,
+                         min = 0,
+                         max = max.perplex)
+        }
+    })
+
     observeEvent(input$doTsne, {
       withProgress(message = "Running tSNE...", value = 0.3, {
-        v$scData <- RunTSNE(v$scData, dims.use = 1:input$dim.used, max_iter = input$max.iter, do.fast = TRUE, dim.embed = 3)
+        dims.use <- NULL
+        if(!is.null(v$scData@dr$pca@jackstraw)){
+            score.df <- JackStraw_pval(v$scData)
+            dims.use <- signif_PCs(score.df)
+        }else{
+            dims.use <- 1:input$dim.used
+        }
+        v$scData <- RunTSNE(v$scData, dims.use = dims.use, max_iter = input$max.iter,
+                            do.fast = TRUE, dim.embed = 3, perplexity = input$perplexity)
         output$Tsne.done <- renderText(paste0("TSNE done!"))
         v$isTSNEdone <- TRUE
       })
@@ -574,7 +650,8 @@ shinyServer(function(input, output, session) {
         }else{
             withProgress(message="Generating TSNE 2D Plot...", value=0, {
                 dr_scatterPlot(v$scData, x.axis = 1, y.axis = 2, dim = "2D",
-                               datatype = "tsne", alpha = input$tsne.plot.alpha, interactive = TRUE)
+                               datatype = "tsne", alpha = input$tsne.plot.alpha,
+                               point.size = as.numeric(input$tsne.plot.size), interactive = TRUE)
             })
         }
     })
@@ -601,10 +678,12 @@ shinyServer(function(input, output, session) {
 
     observeEvent(input$create.selection, {
         ## stash old identity
-        v$scData <- StashIdent(object = v$scData, save.name = 'cluster.ident')
+        if(is.null(v$scData@meta.data$cluster.ident)){
+            v$scData <- StashIdent(object = v$scData, save.name = 'cluster.ident')
+        }
         v$scData <- SetIdent(object = v$scData,
                              cells.use = v$plotlySelection,
-                             ident.use = 'Selection'
+                             ident.use = as.character(input$selection.name)
         )
         updateTabsetPanel(session, "tabs", selected = "DEGs")
     })
@@ -630,7 +709,8 @@ shinyServer(function(input, output, session) {
                     i = i + 1;
                 }
                 tsneplot <- dr_scatterPlot(v$scData, x.axis = 1, y.axis = 2, dim = "2D",
-                                           datatype = "tsne", alpha = 0.8, interactive = TRUE)
+                                           datatype = "tsne", alpha = 0.8,
+                                           point.size = as.numeric(input$tsne.plot.size), interactive = FALSE)
                 prePlot()
                 pdf(filename2,
                     width=as.numeric(input$pdf_w),
@@ -647,10 +727,10 @@ shinyServer(function(input, output, session) {
                 filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), ".txt")
                 i = 0
                 while(file.exists(filename2)){
-                    filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), "_", sprintf("%03d", i + 1), ".txt");
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), "_", sprintf("%03d", i + 1), ".csv");
                     i = i + 1;
                 }
-                write.table(v$scData@dr$tsne@cell.embeddings, file = filename2)
+                write.csv(v$scData@dr$tsne@cell.embeddings, file = filename2)
             })
         }
     })

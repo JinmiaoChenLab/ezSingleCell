@@ -5,7 +5,6 @@ require(Matrix)
 require(plotly)    ## interactive plots
 require(ezSingleCell)
 require(DT)    ## customisable datatable output
-require(webshot)    ## dependecy for exporting plotly to PDF
 
 shinyUI(fluidPage(
     titlePanel("ezSingleCell: Seurat analysis of scRNAseq data"),
@@ -37,10 +36,7 @@ shinyUI(fluidPage(
                                       value = "_")
                      ),
                      column(6,
-                            numericInput(inputId = "field",
-                                         label = "Field",
-                                         value = 1,
-                                         min = 1)
+                            uiOutput("name.field")
                      )
                    ),
                    numericInput(inputId = "expThres",
@@ -72,6 +68,11 @@ shinyUI(fluidPage(
                             actionButton("reset", "Reset Data", icon = icon("repeat"))
                      )
                    )
+               ),
+
+               ##------Set Ident---------
+               wellPanel(
+                   uiOutput("ident.swap")
                ),
 
                ##------Plot download---------
@@ -227,13 +228,12 @@ shinyUI(fluidPage(
                                                     )
                                                   ),
                                                   fluidRow(
-                                                      column(3 #,
-                                                             ## placeholder for point size argument
-                                                             #numericInput("pc.plot.size",
-                                                             #             label = "Point Size:",
-                                                             #             value = 1,
-                                                             #             min = 0.1,
-                                                             #             step = 0.5)
+                                                      column(3 ,
+                                                             numericInput("pc.plot.size",
+                                                                          label = "Point Size:",
+                                                                          value = 1,
+                                                                          min = 0.1,
+                                                                          step = 0.5)
                                                       ),
                                                       column(3,
                                                              sliderInput("pca.plot.alpha",
@@ -291,31 +291,33 @@ shinyUI(fluidPage(
                            tabPanel("TSNE", fluidPage(
                              hr(),
                              fluidRow(
-                               column(4,
+                               column(3,
                                       numericInput("dim.used",
                                                    label = "Dimensions used",
                                                    value = 10)
                                ),
-                               column(4,
+                               column(3,
                                       numericInput("max.iter",
                                                    label = "Max Iterations",
                                                    value = 2000,
                                                    min = 100)
                                ),
-                               column(4,
+                               column(3,
+                                      uiOutput("perplex.option")
+                               ),
+                               column(3,
                                       br(),
                                       actionButton("doTsne", "Run TSNE", icon = icon("hand-pointer-o")),
                                       textOutput("Tsne.done"),
                                       br()
                                )),
                              fluidRow(
-                                 column(3 #,
-                                        ## placeholder for point size argument
-                                        #numericInput("tsne.plot.size",
-                                        #             label = "Point Size:",
-                                        #             value = 1,
-                                        #             min = 0.1,
-                                        #             step = 0.5)
+                                 column(3,
+                                        numericInput("tsne.plot.size",
+                                                     label = "Point Size:",
+                                                     value = 1,
+                                                     min = 0.1,
+                                                     step = 0.1)
                                  ),
                                  column(3,
                                         sliderInput("tsne.plot.alpha",
@@ -324,18 +326,20 @@ shinyUI(fluidPage(
                                                     max = 1,
                                                     step = 0.1,
                                                     value = 0.8)
-                                 )
-                             ),
-                             br(),
-                             fluidRow(
-                                 column(10,
-                                        plotlyOutput("Tsne_2d_plot", width = "100%"),
-                                        plotlyOutput("Tsne_3d_plot", width = "100%")
                                  ),
                                  column(2,
                                         textOutput("selection.summary"),
+                                        textInput("selection.name", label = "New cluster name", value = "custom")
+                                 ),
+                                 column(4,
                                         actionButton("create.selection", label = "Create cluster from selection"),
-                                        actionButton("reset.selection", label = "Reset identities"))
+                                        actionButton("reset.selection", label = "Reset identities")
+                                 )
+                             ),
+                             br(),
+                             plotlyOutput("Tsne_2d_plot", width = "100%"),
+                             plotlyOutput("Tsne_3d_plot", width = "100%"),
+                             fluidRow(
                              )
                            )),
                            ##------DEGs---------
