@@ -1,8 +1,8 @@
 Package: ezSingleCell
 Type: Package
 Title: Interactive single-cell data analysis via the Seurat pipeline
-Version: 0.0.1
-Date: 2017-11-24
+Version: 0.0.2
+Date: 2018-04-20
 Authors@R: person("Matthew", "Myint", email = "a0124008@u.nus.edu ", role = c("aut", "cre"))
 Description: User friendly GUI implementation of Seurat analysis pipeline, from input of expression sparse matrices to DEG analysis.
     This package was designed to allow analysis to be done with easier changing of visualisation parameters.
@@ -12,11 +12,15 @@ Imports:
     shiny,
     dplyr,
     Matrix,
-    plotly
+    plotly,
+    ggplot2,
+    scales,
+    reshape2,
+    DT
 License: Artistic-2.0
 Maintainer: Matthew Myint <a0124008@u.nus.edu.sg>
-URL: https://github.com/MattMyint/ezSeurat
-BugReports: https://github.com/MattMyint/ezSeurat/issues
+URL: https://github.com/JinmiaoChenLab/ezSingleCell
+BugReports: https://github.com/JinmiaoChenLab/ezSingleCell/issues
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 6.0.1

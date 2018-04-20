@@ -4,21 +4,49 @@ options(shiny.launch.browser = T)
 
 shinyServer(function(input, output, session) {
     v <- reactiveValues(scData = NULL,
+                        idents = NULL,
                         isPCAdone = NULL,
                         isTSNEdone = NULL,
-                        isClusterdone = NULL)
+                        isClusterdone = NULL,
+                        pcGenes = NULL,
+                        plotlySelection = NULL,
+                        ips.markers = NULL)
     celltypes <- NULL
     prePlot <- function(){
       while(names(dev.cur()) != "null device"){
         dev.off()
       }
     }
+    observe({
+        #s <- event_data("plotly_selected")
+        #cells <- s[["key"]]
+        v$plotlySelection <- event_data("plotly_selected")[["key"]]
+    })
     ##-------------------Side Panel-------------------
 
     normMethod <- NULL
 
+    output$name.field <- renderUI({
+        if(is.null(input$cellAnnoFiles)){
+            numericInput(inputId = "field",
+                         label = "Field",
+                         value = 1,
+                         min = 1)
+        }else{
+            annoFile <- input$cellAnnoFiles
+            anno.data <- read.table(annoFile$datapath[1], header = T,
+                                    sep = "\t", stringsAsFactors = FALSE)[1:5,]
+            groupings <- colnames(anno.data)
+            selectInput("groupby",
+                        label = "Group by:",
+                        choices = groupings)
+        }
+    })
+
     observeEvent(input$loadButton, {
         tpmFiles <- input$tpmFiles
+        annoFile <- input$cellAnnoFiles
+        names.field <- input$field
         if(input$norm){
           normMethod <- "LogNormalize"
         }
@@ -31,16 +59,32 @@ shinyServer(function(input, output, session) {
                 print(file.exists(paste(tpmFiles$datapath[1], "/", tpmFiles$name[1], sep="")))
                 exp.data <- read.table(tpmFiles$datapath,
                                        sep="\t", header=TRUE, row.names=1, stringsAsFactors = FALSE)
+                additional.ident <- NULL
+                if(!is.null(annoFile)){
+                    anno.data <- read.table(annoFile$datapath[1], header = T,
+                                            sep = "\t", stringsAsFactors = FALSE)
+                    to.append <- apply(anno.data, 1, paste, collapse = "_")
+                    colnames(exp.data) <- to.append
+                    names.field <- match(input$groupby, colnames(anno.data))
+                    additional.ident <- data.frame(data.frame(anno.data[,-1], row.names = to.append))
+                    additional.ident[] <- lapply(additional.ident, factor)
+                }
+                incProgress(0.5, "Creating Seurat Object")
                 sObj <- CreateSeuratObject(exp.data,
                               project = input$projName,
-                              names.field = input$field,
+                              names.field = names.field,
                               names.delim = input$delim,
                               is.expr = input$expThres,
                               normalization.method = normMethod,
-                              min.genes = input$min.genes)
+                              min.genes = input$min.genes,
+                              min.cells = input$min.cells)
                 mito.genes <- grep("^MT-", rownames(sObj@data), ignore.case = TRUE, value = TRUE)
                 percent.mito <- colSums(sObj@raw.data[mito.genes, ])/colSums(sObj@raw.data)
+                incProgress(0.5, "Adding metadata")
                 sObj <- AddMetaData(sObj, percent.mito, "percent.mito")
+                if(!is.null(additional.ident)){
+                    sObj <- AddMetaData(sObj, additional.ident)
+                }
                 v$scData <- sObj
             })
         }
@@ -65,6 +109,31 @@ shinyServer(function(input, output, session) {
           ## open the results directory
           opendir(resultDir)
         }
+    })
+
+    output$ident.swap <- renderUI({
+        if(is.null(v$scData)){
+            return(NULL)
+        }else{
+            groupings <- names(v$scData@meta.data[,!names(v$scData@meta.data) %in% c("nGene", "nUMI", "percent.mito")])
+            tagList(
+                h4("Set current identity:"),
+                fluidRow(
+                    column(6,
+                           selectInput("active.ident", label = NULL,
+                                       choices = groupings)
+                           ),
+                    column(6,
+                           actionButton("swap.ident",label = NULL, icon = icon("arrow-right"))
+                           )
+                )
+
+            )
+        }
+    })
+
+    observeEvent(input$swap.ident, {
+        v$scData <- SetIdent(v$scData, ident.use = as.character(v$scData@meta.data[,input$active.ident]))
     })
 
     output$logo <- renderImage({
@@ -99,86 +168,108 @@ shinyServer(function(input, output, session) {
 
     ##---------------QC tabset-------------------
 
-    ## Add option if no mito genes
-    observeEvent(input$QC == "QC_panel1", {
-        QC_ViolinInput <- function(){
-          if(is.null(v$scData)){
-            return(NULL)
-          }else{
-            withProgress(message="Generating Violin Plot...", value=0, {
-              VlnPlot(v$scData, c("nGene", "percent.mito", "nUMI"), nCol = 1)
-            })
-          }
+    output$nGenePlot <- renderPlotly({
+        if(is.null(v$scData)){
+            plotly_empty()
+        }else{
+            violin_plot(v$scData, "nGene")
         }
-        output$ViolinPlot <- renderPlot({
-          QC_ViolinInput()
-          }, height = 800, width = 850)
-        observeEvent(input$PDFa, {
-          if(!is.null(v$scData)){
-            withProgress(message="Downloading plot PDF files...", value=0, {
-              print(getwd())
-              pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-              if(!dir.exists(pdfDir)){
-                dir.create(pdfDir)
-              }
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"QC_violin_plot_", Sys.Date(), ".pdf")
-              i = 0
-              while(file.exists(filename2)){
-                filename2 <- paste0(pdfDir, .Platform$file.sep,
-                                    "QC_violin_plot_",
-                                    Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-                i = i + 1;
-              }
-              prePlot()
-              pdf(filename2,
-                  width=as.numeric(input$pdf_w),
-                  height=as.numeric(input$pdf_h))
-              print(QC_ViolinInput())
-              dev.off()
-            })
-          }
-        })
     })
 
-    ## Cell plot
-    observeEvent(input$QC == "QC_panel2", {
+    output$mitoPlot <- renderPlotly({
+        if(is.null(v$scData)){
+            plotly_empty()
+        }else{
+            violin_plot(v$scData, "percent.mito")
+        }
+    })
+
+    output$nUMIPlot <- renderPlotly({
+        if(is.null(v$scData)){
+            plotly_empty()
+        }else{
+            violin_plot(v$scData, "nUMI")
+        }
+    })
+
+    output$name <- renderPrint({
+        s <- event_data("plotly_selected")
+        c(s[["key"]], class(s[["key"]]))
+    })
+
+    observeEvent(input$PDFa, {
         if(!is.null(v$scData)){
-          withProgress(message="Generating Cell/Gene Plots...", value=0, {
-            gPlot1 <- GenePlot(v$scData, "nUMI", "nGene", cex.use = 1, do.hover = TRUE)
-            gPlot2 <- GenePlot(v$scData, "nUMI", "percent.mito", cell.ids = WhichCells(v$scData), cex.use = 1, do.hover = TRUE)
-          })
-          output$CellPlot1 <- renderPlotly({
-            print(gPlot1)
-          })
-          output$CellPlot2 <- renderPlotly({
-            print(gPlot2)
-          })
-          observeEvent(input$PDFb, {
-            if(!is.null(v$scData)){
-              withProgress(message="Downloading plot PDF files...", value=0, {
+            withProgress(message="Downloading plot PDF files...", value=0, {
                 print(getwd())
                 pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
                 if(!dir.exists(pdfDir)){
-                  dir.create(pdfDir)
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"QC_violin_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,
+                                        "QC_violin_plot_",
+                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                prePlot()
+                nG <- violin_plot(v$scData, "nGene", interactive = FALSE)
+                pM <- violin_plot(v$scData, "percent.mito", interactive = FALSE)
+                nU <- violin_plot(v$scData, "nUMI", interactive = FALSE)
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(nG)
+                print(pM)
+                print(nU)
+                dev.off()
+            })
+        }
+    })
+
+    ## Cell plot
+
+    output$CellPlot1 <- renderPlotly({
+        if(is.null(v$scData)){
+            plotly_empty()
+        }else{
+            print(GenePlot(v$scData, "nUMI", "nGene", cex.use = 1, do.hover = TRUE))
+        }
+    })
+
+    output$CellPlot2 <- renderPlotly({
+        if(is.null(v$scData)){
+            plotly_empty()
+        }else{
+            print(GenePlot(v$scData, "nUMI", "percent.mito", cell.ids = WhichCells(v$scData), cex.use = 1, do.hover = TRUE))
+        }
+    })
+
+    observeEvent(input$PDFb, {
+        if(!is.null(v$scData)){
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
                 }
                 filename2 <- paste0(pdfDir, .Platform$file.sep,"QC_cell_plot_", Sys.Date(), ".pdf")
                 i = 0
                 while(file.exists(filename2)){
-                  filename2 <- paste0(pdfDir, .Platform$file.sep,
-                                      "QC_cell_plot_",
-                                      Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-                  i = i + 1;
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,
+                                        "QC_cell_plot_",
+                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
                 }
                 prePlot()
                 pdf(filename2,
                     width=as.numeric(input$pdf_w),
                     height=as.numeric(input$pdf_h))
                 GenePlot(v$scData, "nUMI", "nGene", cex.use = 1)
-                GenePlot(v$scData, "nUMI", "percent.mito", cell.ids = WhichCells(v$scData), cex.use = 1, do.hover = TRUE)
+                GenePlot(v$scData, "nUMI", "percent.mito", cell.ids = WhichCells(v$scData), cex.use = 1)
                 dev.off()
-              })
-            }
-          })
+            })
         }
     })
 
@@ -195,24 +286,24 @@ shinyServer(function(input, output, session) {
         VarGeneText <- paste0("Number of variable genes: ", length(v$scData@var.genes))
         output$nVarGenes <- renderText(VarGeneText)
       })
-      observeEvent(input$doVarplot,{
-        varGenePlotInput <- function(){
-          if(is.null(v$scData)){
+    observeEvent(input$doVarplot,{
+      varGenePlotInput <- function(){
+        if(is.null(v$scData)){
             return(NULL)
-          }else{
+        }else{
             withProgress(message="Plotting variable genes...", value=0, {
               VariableGenePlot(v$scData,
                                x.low.cutoff = input$x.cutoff,
                                y.cutoff = input$y.cutoff,
                                do.contour = FALSE)
             })
-          }
         }
+      }
 
-        output$VarGenes <- renderPlot({
+    output$VarGenes <- renderPlot({
           varGenePlotInput()
         }, height = 800, width = 850)
-        observeEvent(input$PDFc, {
+    observeEvent(input$PDFc, {
           if(!is.null(v$scData)){
             withProgress(message="Downloading plot PDF files...", value=0, {
               print(getwd())
@@ -235,13 +326,14 @@ shinyServer(function(input, output, session) {
               varGenePlotInput()
               mtext(VarGeneText)
               dev.off()
+              txtfile <- sub("Var_genes_plot_", "Var_gene_list_", filename2)
+              txtfile <- sub(".pdf", ".txt", txtfile)
+              write(v$scData@var.genes, file = txtfile)
             })
           }
         })
       })
     })
-
-
 
     ##---------------PCA tabset-------------------
     # PCA plot
@@ -251,6 +343,15 @@ shinyServer(function(input, output, session) {
         incProgress(0.5, message = "Running PCA...")
         v$scData <- RunPCA(v$scData, pc.genes = v$scData@var.genes, do.print = TRUE, pcs.print = 1:5, genes.print = 5)
         v$isPCAdone <- TRUE
+        v$scData <- ProjectPCA(v$scData)
+        incProgress(0.4, message = "Getting list of PC genes...")
+        pc.table <- list()
+        for(i in 1:20){
+            pcg <- DimTopGenes(v$scData, dim.use = i, do.balanced = TRUE, num.genes = 30)
+            pc.table[[i]] <- pcg
+        }
+        pc.table <- as.data.frame(pc.table, col.names = paste0("PC", 1:20))
+        v$pcGenes <- pc.table
       })
     })
 
@@ -259,14 +360,19 @@ shinyServer(function(input, output, session) {
         return(NULL)
       }else{
         tagList(
-          numericInput("clus.res",
-                       label = "Cluster Resolution",
-                       value = 0.6,
-                       min = 0.1,
-                       step = 0.1),
-          br(),
-          actionButton("findCluster", "Find Clusters", icon = icon("hand-pointer-o")),
-          textOutput("cluster.done")
+          fluidRow(
+              column(6,
+                     numericInput("clus.res",
+                                  label = "Cluster Resolution",
+                                  value = 0.6,
+                                  min = 0.1,
+                                  step = 0.1)
+                     ),
+              column(6,
+                     actionButton("findCluster", "Find Clusters", icon = icon("hand-pointer-o")),
+                     textOutput("cluster.done")
+                     )
+          )
         )
       }
     })
@@ -280,246 +386,230 @@ shinyServer(function(input, output, session) {
       })
     })
 
-    output$pca_plotspace <- renderUI({
-      if(is.null(v$isPCAdone)){
-        return(NULL)
-      }else{
-        plotlyOutput("PCAPlot", width = "100%")
-      }
+    output$PCA2DPlot <- renderPlotly({
+        if(is.null(v$isPCAdone)){
+            plotly_empty()
+        }else{
+            withProgress(message="Generating 2D PCA Plot...", value=0, {
+                dr_scatterPlot(v$scData, x.axis = as.numeric(input$x.pc),
+                               y.axis = as.numeric(input$y.pc),
+                               alpha = input$pca.plot.alpha,
+                               point.size = as.numeric(input$pc.plot.size),
+                               dim = "2D", datatype = "pca")
+            })
+        }
     })
 
-    observeEvent(input$Pca == "P_panel1", {
-      pcaPlotInput <- function(){
-        if(is.null(v$scData) || !v$isPCAdone){
-          return(NULL)
+    output$PCA3DPlot <- renderPlotly({
+        if(is.null(v$isPCAdone)){
+            plotly_empty()
         }else{
-          withProgress(message="Generating PCA Plot...", value=0, {
-            PCAPlot(v$scData, dim.1 = input$x.pc, dim.2 = input$y.pc, pt.size = 2, do.hover = TRUE)
-          })
+            withProgress(message="Generating 3D PCA Plot...", value=0, {
+                dr_scatterPlot(v$scData, x.axis = as.numeric(input$x.pc),
+                               y.axis = as.numeric(input$y.pc),
+                               z.axis = as.numeric(input$z.pc),
+                               alpha = input$pca.plot.alpha,
+                               dim = "3D", datatype = "pca")
+            })
         }
-      }
-      output$PCAPlot <- renderPlotly({
-        pcaPlotInput()
-      })
-      observeEvent(input$PDFd, {
+    })
+
+    observeEvent(input$PDFd, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"PCA_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,
-                                  "PCA_plot_",
-                                  Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            PCAPlot(v$scData, dim.1 = input$x.pc, dim.2 = input$y.pc, pt.size = 2)
-            dev.off()
-          })
-          withProgress(message="Downloading PCA coordinates...", value=0.5, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"pca_", Sys.Date(), ".txt")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,
-                                  "pca_",
-                                  Sys.Date(), "_", sprintf("%03d", i + 1), ".txt");
-              i = i + 1;
-            }
-            write.table(v$scData@dr$pca@cell.embeddings, file = filename2)
-          })
-          withProgress(message="Downloading cluster IDs...", value=0.9, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), ".txt")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), "_", sprintf("%03d", i + 1), ".txt");
-              i = i + 1;
-            }
-            write.table(v$scData@ident, file = filename2)
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"PCA_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,
+                                        "PCA_plot_",
+                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                pcaplot <- dr_scatterPlot(v$scData, x.axis = as.numeric(input$x.pc),
+                                          y.axis = as.numeric(input$y.pc),
+                                          alpha = input$pca.plot.alpha,
+                                          dim = "2D", datatype = "pca", interactive = FALSE)
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(pcaplot)
+                dev.off()
+            })
+            withProgress(message="Downloading PCA coordinates...", value=0.5, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"pca_", Sys.Date(), ".txt")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,
+                                        "pca_",
+                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".csv");
+                    i = i + 1;
+                }
+                write.csv(v$scData@dr$pca@cell.embeddings, file = filename2)
+            })
+            withProgress(message="Downloading cluster IDs...", value=0.9, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), ".txt")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"cluster_", Sys.Date(), "_", sprintf("%03d", i + 1), ".csv");
+                    i = i + 1;
+                }
+                write.csv(v$scData@ident, file = filename2)
+            })
         }
-      })
     })
 
     # Viz plot
-    observeEvent(input$Pca == "P_panel2", {
-      if(!is.null(v$scData)){
-        v$scData <- ProjectPCA(v$scData)
-      }
-      VizInput <- function(){
-        if(is.null(v$scData)){
-          return(NULL)
+
+    output$vizPlot <- renderPlot({
+        if(is.null(v$scData) && v$isPCAdone){
+            return(NULL)
         }else{
-          withProgress(message="Generating Viz Plot...", value=0, {
-            VizPCA(v$scData)
-          })
+            VizPCA(v$scData, pcs.use = as.numeric(input$select.pc))
         }
-      }
-      output$vizPlot <- renderPlot({
-        VizInput()
-      }, height = 800, width = 850)
-      observeEvent(input$PDFe, {
-        if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"Viz_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,
-                                  "Viz_plot_",
-                                  Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            VizInput()
-            dev.off()
-          })
+    }, width = 600)
+
+    output$PCHeatmap <- renderPlot({
+        if(is.null(v$scData) && v$isPCAdone){
+            return(NULL)
+        }else{
+            PCHeatmap(v$scData, pc.use = as.numeric(input$select.pc), do.balanced = TRUE, label.columns = TRUE, use.full = FALSE, srtCol = 45, offsetRow = -0.5, cexCol = 0.5, offsetCol = -0.5, key = FALSE)
         }
-      })
     })
 
-    # PC heatmap
-    observeEvent(input$Pca == "P_panel3", {
-      PCHmInput <- function(){
-        if(is.null(v$scData)){
-          return(NULL)
+    output$PCtable <- DT::renderDataTable({
+        if(is.null(v$scData) && v$isPCAdone){
+            return(NULL)
         }else{
-          withProgress(message="Generating PC Heatmap...", value=0, {
-            PCHeatmap(v$scData, pc.use = input$PCused, do.balanced = TRUE, label.columns = TRUE, use.full = FALSE, srtCol = 45, offsetRow = -0.5, cexCol = 0.5, offsetCol = -0.5, key = FALSE)
-          })
+            v$pcGenes
         }
-      }
-      output$PCHeatmap <- renderPlot({
-        PCHmInput()
-      }, height = 800, width = 850)
-      observeEvent(input$PDFf, {
+    }, options = list(scrollX = TRUE))
+
+    observeEvent(input$PDFe, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"PC_Heatmap_PC", input$PCused, "_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"PC_Heatmap_PC", input$PCused, "_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            PCHmInput()
-            dev.off()
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"Viz_Heatmap_plots_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,
+                                        "Viz_Heatmap_plots_",
+                                        Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                isolate({
+                    VizPCA(v$scData, pcs.use = as.numeric(input$select.pc))
+                    PCHeatmap(v$scData, pc.use = as.numeric(input$select.pc), do.balanced = TRUE, label.columns = TRUE, use.full = FALSE, srtCol = 45, offsetRow = -0.5, cexCol = 0.5, offsetCol = -0.5, key = FALSE)
+                })
+                dev.off()
+                pcGenes <- v$pcGenes
+                write.csv(v$pcGenes, file = paste0(pdfDir, .Platform$file.sep,"PC_genes_", Sys.Date(), ".csv"))
+            })
         }
-      })
     })
+
 
     ##---------------Significant PCs tabset-------------------
 
     # Jackstraw
-    observeEvent(input$doJack, { #put under control of run button again
-      JackInput <- function(){
+    observeEvent(input$doJack, {
         if(is.null(v$scData)){
-          return(NULL)
+            return(NULL)
         }else{
-          withProgress(message="Generating Jackstraw Plot...", value=0, {
-            v$scData <- JackStraw(v$scData, num.replicate = 100, do.print = TRUE)
-            JackStrawPlot(v$scData, PCs = 1:12)
-          })
+            withProgress(message="Running Jackstraw...", value=0.5, {
+                v$scData <- JackStraw(v$scData, num.replicate = 100, do.print = TRUE)
+            })
         }
-      }
-      output$Jackstraw <- renderPlot({
-        JackInput()
-      }, height = 800, width = 850)
-      observeEvent(input$PDFg, {
+    })
+
+    output$Jackstraw <- renderPlot({
+        if(is.null(v$scData@dr$pca@jackstraw)){
+            return(NULL)
+        }else{
+            JackStrawPlot(v$scData, PCs = 1:20)
+        }
+    }, height = 800, width = 850)
+
+    observeEvent(input$PDFg, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            JackStrawPlot(v$scData, PCs = 1:12)
-            dev.off()
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"Jackstraw_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(JackStrawPlot(v$scData, PCs = 1:20))
+                dev.off()
+            })
         }
-      })
     })
 
     # Elbow
-    observeEvent(input$doElbow, {
-      ElbowInput <- function(){
-        if(is.null(v$scData)){
-          return(NULL)
+    output$Elbow <- renderPlot({
+        if(is.null(v$scData@dr$pca@jackstraw)){
+            return(NULL)
         }else{
-          withProgress(message="Generating Elbow Plot...", value=0, {
-            PCElbowPlot(v$scData)
-          })
+            withProgress(message="Generating Elbow Plot...", value=0.5, {
+                PCElbowPlot(v$scData)
+            })
         }
-      }
-      output$Elbow <- renderPlot({
-        ElbowInput()
-      }, height = 800, width = 850)
-      observeEvent(input$PDFh, {
+    }, height = 800, width = 850)
+
+    observeEvent(input$PDFh, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            print(ElbowInput())
-            dev.off()
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"Elbow_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(PCElbowPlot(v$scData))
+                dev.off()
+            })
         }
-      })
     })
 
     ##---------------TSNE tabset-------------------
@@ -540,63 +630,109 @@ shinyServer(function(input, output, session) {
 
     observeEvent(input$doTsne, {
       withProgress(message = "Running tSNE...", value = 0.3, {
-        v$scData <- RunTSNE(v$scData, dims.use = 1:input$dim.used, max_iter = input$max.iter,
-                            do.fast = TRUE, perplexity = input$perplexity)
+        dims.use <- NULL
+        if(!is.null(v$scData@dr$pca@jackstraw)){
+            score.df <- JackStraw_pval(v$scData)
+            dims.use <- signif_PCs(score.df)
+        }else{
+            dims.use <- 1:input$dim.used
+        }
+        v$scData <- RunTSNE(v$scData, dims.use = dims.use, max_iter = input$max.iter,
+                            do.fast = TRUE, dim.embed = 3, perplexity = input$perplexity)
         output$Tsne.done <- renderText(paste0("TSNE done!"))
         v$isTSNEdone <- TRUE
       })
     })
 
-    observeEvent(input$doTsnePlot, {
-      TsneInput <- function(){
-        if(is.null(v$scData)){
-          return(NULL)
+    output$Tsne_2d_plot <- renderPlotly({
+        if(is.null(v$scData) || is.null(v$isTSNEdone)){
+            plotly_empty()
         }else{
-          withProgress(message="Generating TSNE Plot...", value=0, {
-            TSNEPlot(v$scData, pt.size = 2, do.hover = TRUE)
-          })
+            withProgress(message="Generating TSNE 2D Plot...", value=0, {
+                dr_scatterPlot(v$scData, x.axis = 1, y.axis = 2, dim = "2D",
+                               datatype = "tsne", alpha = input$tsne.plot.alpha,
+                               point.size = as.numeric(input$tsne.plot.size), interactive = TRUE)
+            })
         }
-      }
-      output$Tsne.plot <- renderPlotly({
-        TsneInput()
-      })
-      observeEvent(input$PDFi, {
+    })
+
+    output$Tsne_3d_plot <- renderPlotly({
+        if(is.null(v$scData) || is.null(v$isTSNEdone)){
+            plotly_empty()
+        }else{
+            withProgress(message="Generating TSNE 3D Plot...", value=0, {
+                dr_scatterPlot(v$scData, x.axis = 1, y.axis = 2, z.axis = 3, dim = "3D",
+                               datatype = "tsne", alpha = input$tsne.plot.alpha, interactive = TRUE)
+            })
+        }
+    })
+
+    output$selection.summary <- renderText({
+        if(is.null(v$plotlySelection)){
+            return(NULL)
+        }else{
+            t <- paste0(length(v$plotlySelection), " cells selected")
+            t
+        }
+    })
+
+    observeEvent(input$create.selection, {
+        ## stash old identity
+        if(is.null(v$scData@meta.data$cluster.ident)){
+            v$scData <- StashIdent(object = v$scData, save.name = 'cluster.ident')
+        }
+        v$scData <- SetIdent(object = v$scData,
+                             cells.use = v$plotlySelection,
+                             ident.use = as.character(input$selection.name)
+        )
+        updateTabsetPanel(session, "tabs", selected = "DEGs")
+    })
+
+    observeEvent(input$reset.selection, {
+        v$scData <- SetAllIdent(object = v$scData,  id = 'cluster.ident')
+        #event_data("plotly_select") <- NULL
+        v$plotlySelection <- NULL
+    })
+
+    observeEvent(input$PDFi, {
         if(!is.null(v$scData)){
-          withProgress(message="Downloading plot PDF files...", value=0, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"TSNE_plot_", Sys.Date(), ".pdf")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"TSNE_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-              i = i + 1;
-            }
-            prePlot()
-            pdf(filename2,
-                width=as.numeric(input$pdf_w),
-                height=as.numeric(input$pdf_h))
-            TSNEPlot(v$scData, pt.size = 2)
-            dev.off()
-          })
-          withProgress(message="Downloading tSNE coordinates...", value=0.6, {
-            print(getwd())
-            pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-            if(!dir.exists(pdfDir)){
-              dir.create(pdfDir)
-            }
-            filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), ".txt")
-            i = 0
-            while(file.exists(filename2)){
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), "_", sprintf("%03d", i + 1), ".txt");
-              i = i + 1;
-            }
-            write.table(v$scData@dr$tsne@cell.embeddings, file = filename2)
-          })
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"TSNE_plot_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"TSNE_plot_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                tsneplot <- dr_scatterPlot(v$scData, x.axis = 1, y.axis = 2, dim = "2D",
+                                           datatype = "tsne", alpha = 0.8,
+                                           point.size = as.numeric(input$tsne.plot.size), interactive = FALSE)
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(tsneplot)
+                dev.off()
+            })
+            withProgress(message="Downloading tSNE coordinates...", value=0.6, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), ".txt")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"tsne_", Sys.Date(), "_", sprintf("%03d", i + 1), ".csv");
+                    i = i + 1;
+                }
+                write.csv(v$scData@dr$tsne@cell.embeddings, file = filename2)
+            })
         }
-      })
     })
 
     ##---------------DEGs tabset-------------------
@@ -607,7 +743,7 @@ shinyServer(function(input, output, session) {
         celltypes <- levels(v$scData@ident)
         selectInput('c1', 'Choose cluster of interest:',
                     choices = celltypes,
-                    selected = celltypes[1],
+                    selected = if("Selection" %in% celltypes) "Selection" else celltypes[1],
                     selectize = FALSE,
                     width = "100%")
       }
@@ -636,52 +772,62 @@ shinyServer(function(input, output, session) {
             ips.markers <- FindMarkers(v$scData, ident.1 = input$c1, ident.2 = input$c2, thresh.use = 2)
           }
           ips.markers$adj_p_val <- p.adjust(ips.markers$p_val, method = "BH")
-          vlnMarkers <- rownames(ips.markers)
-          if(length(vlnMarkers) < 5 ){
-            vlnMarkers <- vlnMarkers[!is.na(vlnMarkers)]
-          }else{
-            vlnMarkers <- vlnMarkers[1:5]
-          }
-        })
-        DegPlotInput <- function(){
-          if(is.null(v$scData)){
-            return(NULL)
-          }else{
-            withProgress(message="Generating DEG Plots...", value=0, {
-              VlnPlot(v$scData, vlnMarkers, nCol = 1)
-            })
-          }
-        }
-        output$Deg.plot <- renderPlot({
-          DegPlotInput()
-        }, height = 800, width = 400)
-        output$Deg.table <- renderTable(print(head(ips.markers, 15)), rownames = TRUE, digits = -1)
-
-        observeEvent(input$PDFj, {
-          if(!is.null(v$scData)){
-            withProgress(message="Downloading plot PDF files...", value=0, {
-              print(getwd())
-              pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
-              if(!dir.exists(pdfDir)){
-                dir.create(pdfDir)
-              }
-              filename2 <- paste0(pdfDir, .Platform$file.sep,"DEG_plot_", input$c1, "vs", input$c2, "_", Sys.Date(), ".pdf")
-              i = 0
-              while(file.exists(filename2)){
-                filename2 <- paste0(pdfDir, .Platform$file.sep,"DEG_plot_", input$c1, "vs", input$c2, "_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
-                i = i + 1;
-              }
-              prePlot()
-              pdf(filename2,
-                  width=as.numeric(input$pdf_w),
-                  height=as.numeric(input$pdf_h))
-              print(DegPlotInput())
-              dev.off()
-              write.csv(ips.markers, file = paste0(pdfDir, .Platform$file.sep,"DEG_plot_", input$c1, "vs", input$c2, "_", Sys.Date(), ".csv"))
-            })
-          }
+          v$ips.markers <- ips.markers
         })
       }
+    })
+
+    output$deg.gene.select <- renderUI({
+        if(is.null(v$ips.markers)){
+            return(NULL)
+        }else{
+            selectInput("deg.gene", label = "Gene to visualise",
+                        choices = rownames(v$ips.markers))
+        }
+    })
+
+    output$Deg.plot <- renderPlotly({
+        if(is.null(v$ips.markers)){
+            return(NULL)
+        }else{
+            withProgress(message="Generating DEG Plot...", value=0, {
+                violin_plot(v$scData, input$deg.gene)
+            })
+        }
+    })
+
+    output$Deg.table <- DT::renderDataTable({
+        if(is.null(v$scData) && v$isPCAdone){
+            return(NULL)
+        }else{
+            signif(v$ips.markers, 4)
+        }
+    }, options = list(scrollX = TRUE, scrollY = "400px"))
+
+    observeEvent(input$PDFj, {
+        if(!is.null(v$scData)){
+            withProgress(message="Downloading plot PDF files...", value=0, {
+                print(getwd())
+                pdfDir <- paste0(getwd(), .Platform$file.sep, "Seurat_results/Generated_reports_", Sys.Date())
+                if(!dir.exists(pdfDir)){
+                    dir.create(pdfDir)
+                }
+                filename2 <- paste0(pdfDir, .Platform$file.sep,"DEG_plot_", input$c1, "vs", input$c2, "_", Sys.Date(), ".pdf")
+                i = 0
+                while(file.exists(filename2)){
+                    filename2 <- paste0(pdfDir, .Platform$file.sep,"DEG_plot_", input$c1, "vs", input$c2, "_", Sys.Date(), "_", sprintf("%03d", i + 1), ".pdf");
+                    i = i + 1;
+                }
+                degVln <- violin_plot(v$scData, input$deg.gene, interactive = FALSE)
+                prePlot()
+                pdf(filename2,
+                    width=as.numeric(input$pdf_w),
+                    height=as.numeric(input$pdf_h))
+                print(degVln)
+                dev.off()
+                write.csv(v$ips.markers, file = paste0(pdfDir, .Platform$file.sep,"DEG_table_", input$c1, "vs", input$c2, "_", Sys.Date(), ".csv"))
+            })
+        }
     })
     ##---------------Summary tab
 
